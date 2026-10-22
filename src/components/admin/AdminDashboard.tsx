@@ -169,6 +169,20 @@ export const AdminDashboard: React.FC = () => {
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (formData.videoUrl?.startsWith('blob:')) {
+      alert(
+        "⚠️ Cannot Publish Local Computer Video File to Clients:\n\n" +
+        "You attached a video file from your computer's local hard drive (blob: URL).\n\n" +
+        "A local computer file only exists inside YOUR own browser's temporary memory. Your clients and visitors on the internet CANNOT access files on your private computer!\n\n" +
+        "To make your video visible and playable for all clients worldwide:\n" +
+        "1. Upload the video to YouTube (set Visibility to 'Unlisted' so it is only viewable through your portfolio).\n" +
+        "2. Copy the YouTube link and paste it into the Video Source field.\n" +
+        "3. Click 'Auto-Grab YouTube Thumbnail' to automatically get the HD cover photo.\n\n" +
+        "YouTube will stream the video smoothly in 1080p/4K to all client phones, tablets, and computers."
+      );
+      return;
+    }
+
     const techniquesArray = techniquesInput
       .split(',')
       .map(t => t.trim())
@@ -264,11 +278,28 @@ export const AdminDashboard: React.FC = () => {
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      showToast('Optimizing and loading image...');
+      showToast('Optimizing & uploading thumbnail to server...');
       const optimizedUrl = await compressImage(file, 1280, 720, 0.85);
       if (optimizedUrl) {
+        try {
+          const res = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataUrl: optimizedUrl, filename: file.name })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.url) {
+              setFormData(prev => ({ ...prev, thumbnailUrl: data.url }));
+              showToast('Custom thumbnail uploaded to server & ready for all clients!');
+              return;
+            }
+          }
+        } catch {
+          // fallback to compressed data URL
+        }
         setFormData(prev => ({ ...prev, thumbnailUrl: optimizedUrl }));
-        showToast('Custom thumbnail ready and saved!');
+        showToast('Custom thumbnail optimized & ready!');
       }
     }
   };
@@ -277,9 +308,29 @@ export const AdminDashboard: React.FC = () => {
   const handleAboutImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      showToast('Optimizing portrait photo...');
+      showToast('Optimizing & uploading portrait to server...');
       const optimizedUrl = await compressImage(file, 1000, 1250, 0.88);
       if (optimizedUrl) {
+        try {
+          const res = await fetch('/api/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataUrl: optimizedUrl, filename: file.name })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.url) {
+              setContentForm(prev => ({
+                ...prev,
+                about: { ...prev.about, imageUrl: data.url }
+              }));
+              showToast('Studio portrait photo uploaded to server & saved!');
+              return;
+            }
+          }
+        } catch {
+          // fallback
+        }
         setContentForm(prev => ({
           ...prev,
           about: { ...prev.about, imageUrl: optimizedUrl }
@@ -293,13 +344,22 @@ export const AdminDashboard: React.FC = () => {
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      alert(
+        `Notice: You selected "${file.name}".\n\n` +
+        "⚠️ Why this won't show on client devices:\n" +
+        "Selecting a file from your PC only loads it into this browser tab's RAM. External clients on their phones or laptops cannot connect to your personal PC to stream files.\n\n" +
+        "To let all clients watch your video in full HD:\n" +
+        "1. Upload the video to YouTube (mark it as 'Unlisted' so it remains private).\n" +
+        "2. Paste the YouTube link into the Video Source box.\n" +
+        "3. YouTube will stream it worldwide to all your clients without any lag!"
+      );
       const objectUrl = URL.createObjectURL(file);
       setFormData(prev => ({
         ...prev,
         videoUrl: objectUrl,
         videoType: 'uploaded'
       }));
-      showToast('Local video attached! Ready to preview.');
+      showToast('Local test video loaded (Only visible on your PC browser)');
     }
   };
 

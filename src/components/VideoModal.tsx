@@ -4,6 +4,11 @@ import { X, Play, Clock, Eye, TrendingUp, CheckCircle, Quote, Sparkles } from 'l
 
 export const VideoModal: React.FC = () => {
   const { activeProjectModal, closeProjectModal } = useProjects();
+  const [hasVideoError, setHasVideoError] = React.useState(false);
+
+  useEffect(() => {
+    setHasVideoError(false);
+  }, [activeProjectModal]);
 
   // Close on Escape key
   useEffect(() => {
@@ -160,13 +165,14 @@ export const VideoModal: React.FC = () => {
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
               />
-            ) : embedInfo.type === 'direct' && embedInfo.src ? (
+            ) : embedInfo.type === 'direct' && embedInfo.src && !hasVideoError ? (
               <video
                 src={embedInfo.src}
                 controls
                 autoPlay
                 className="w-full h-full object-contain"
                 poster={project.thumbnailUrl}
+                onError={() => setHasVideoError(true)}
               >
                 Your browser does not support the video tag.
               </video>
@@ -175,13 +181,17 @@ export const VideoModal: React.FC = () => {
                 className="w-full h-full bg-cover bg-center flex items-center justify-center relative"
                 style={{ backgroundImage: `url('${project.thumbnailUrl}')` }}
               >
-                <div className="absolute inset-0 bg-black/50" />
-                <div className="relative text-center p-6 text-white flex flex-col items-center gap-3">
-                  <div className="w-16 h-16 rounded-full bg-[#2d5342] flex items-center justify-center text-white shadow-xl">
-                    <Play className="w-8 h-8 fill-current ml-1" />
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" />
+                <div className="relative text-center p-6 text-white flex flex-col items-center gap-3 max-w-md mx-auto">
+                  <div className="w-14 h-14 rounded-full bg-[#2d5342] flex items-center justify-center text-white shadow-xl">
+                    <Play className="w-6 h-6 fill-current ml-0.5" />
                   </div>
-                  {showTitle && <p className="font-semibold text-lg">{project.title}</p>}
-                  <p className="text-xs text-white/80">Paste a YouTube or Vimeo link in the Admin Dashboard to enable playback</p>
+                  {showTitle && <p className="font-semibold text-base sm:text-lg">{project.title}</p>}
+                  <p className="text-xs text-white/90 leading-relaxed">
+                    {hasVideoError || embedInfo.isBlob
+                      ? 'This video source was loaded from a local computer file and cannot be streamed over the web. Please enter a YouTube link (set to Unlisted) or public video URL in the Admin Studio so your clients can view it!'
+                      : 'Paste a YouTube or Vimeo link in the Creator Studio Admin to enable instant HD streaming worldwide.'}
+                  </p>
                 </div>
               </div>
             )}

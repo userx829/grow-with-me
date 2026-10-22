@@ -18,16 +18,24 @@ app.use(express.json({ limit: '25mb' }));
 
 // Data Directory and File Paths
 const DATA_DIR = path.join(__dirname, 'data');
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const PROJECTS_FILE = path.join(DATA_DIR, 'projects.json');
 const PROJECTS_DEFAULT_FILE = path.join(DATA_DIR, 'projects_default.json');
 const CONTENT_FILE = path.join(DATA_DIR, 'content.json');
 const CONTENT_DEFAULT_FILE = path.join(DATA_DIR, 'content_default.json');
 const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
 
+// Serve uploaded assets statically
+app.use('/uploads', express.static(UPLOADS_DIR));
+
 // Initialize data directory and default backup files if needed
 function initStorage() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+
+  if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
   }
 
   // If defaults file doesn't exist but projects file exists, create backup
@@ -257,6 +265,43 @@ app.post('/api/inquiries', (req: Request, res: Response) => {
   const updated = [newInquiry, ...inquiries];
   writeInquiries(updated);
   res.status(201).json(newInquiry);
+});
+
+// 4. File Upload API for custom thumbnails and assets
+app.post('/api/upload', (req: Request, res: Response) => {
+  const { dataUrl, filename } = req.body;
+  if (!dataUrl || typeof dataUrl !== 'string') {
+    return res.status(400).json({ error: 'dataUrl is required' });
+  }
+
+  try {
+    const matches = dataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+      if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
+        return res.json({ url: dataUrl });
+      }
+      return res.status(400).json({ error: 'Invalid data URL format' });
+    }
+
+    const mime = matches[1];
+    let ext = 'jpg';
+    if (mime.includes('png')) ext = 'png';
+    else if (mime.includes('webp')) ext = 'webp';
+    else if (mime.includes('gif')) ext = 'gif';
+
+    const cleanBaseName = filename ? filename.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30) : 'thumb';
+    const uniqueName = `${cleanBaseName}_${Date.now()}.${ext}`;
+    const targetFile = path.join(UPLOADS_DIR, uniqueName);
+
+    const buffer = Buffer.from(matches[2], 'base64');
+    fs.writeFileSync(targetFile, buffer);
+
+    const publicUrl = `/uploads/${uniqueName}`;
+    res.status(201).json({ url: publicUrl, filename: uniqueName });
+  } catch (err) {
+    console.error('Error handling upload:', err);
+    res.status(500).json({ error: 'Failed to save file' });
+  }
 });
 
 // Mount Vite or serve production bundle
