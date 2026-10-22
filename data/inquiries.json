@@ -1,0 +1,12 @@
+[
+  {
+    "id": "sample-inq-1",
+    "name": "Julian Drake",
+    "email": "julian@example.com",
+    "projectType": "YouTube Video Editing",
+    "budgetRange": "$1,000 - $3,000",
+    "details": "Looking for a regular video editor for my 450K tech YouTube channel with 4K footage and b-roll color grading.",
+    "createdAt": "2026-04-10T14:30:00Z",
+    "status": "reviewed"
+  }
+]

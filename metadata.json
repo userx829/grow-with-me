@@ -1,0 +1,6 @@
+{
+  "name": "Grow With Ayush - Video Editor & Portfolio",
+  "description": "Professional video editing portfolio and content management dashboard for cinematic long-form videos, shorts, and reels.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
