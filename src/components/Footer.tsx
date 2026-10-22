@@ -1,6 +1,6 @@
 import React from 'react';
 import { useProjects } from '../context/ProjectContext';
-import { Share2, Mail } from 'lucide-react';
+import { Share2, Mail, Lock } from 'lucide-react';
 
 export const Footer: React.FC = () => {
   const { setCurrentView, siteContent } = useProjects();
@@ -45,28 +45,40 @@ export const Footer: React.FC = () => {
           &copy; {new Date().getFullYear()} {siteContent.brandName || 'Grow With Ayush'}. All rights reserved.
         </p>
 
-        {/* Social / Direct Channels */}
-        {siteContent?.visibility?.showFooterSocials !== false && (
-          <div className="flex items-center gap-4 text-[#414844] dark:text-[#b9c1ba]">
-            <button
-              onClick={handleShare}
-              aria-label="Share Portfolio"
-              className="hover:text-[#1a1c19] dark:hover:text-white transition-colors p-1 cursor-pointer"
-              title="Share Portfolio"
-            >
-              <Share2 className="w-4 h-4" />
-            </button>
+        {/* Social / Direct Channels and Admin Portal */}
+        <div className="flex items-center gap-4 text-[#414844] dark:text-[#b9c1ba]">
+          {siteContent?.visibility?.showFooterSocials !== false && (
+            <>
+              <button
+                onClick={handleShare}
+                aria-label="Share Portfolio"
+                className="hover:text-[#1a1c19] dark:hover:text-white transition-colors p-1 cursor-pointer"
+                title="Share Portfolio"
+              >
+                <Share2 className="w-4 h-4" />
+              </button>
 
-            <a
-              href={`mailto:${siteContent.contact?.contactEmail || 'contact@growwithayush.com'}`}
-              aria-label="Email Ayush"
-              className="hover:text-[#1a1c19] dark:hover:text-white transition-colors p-1"
-              title="Email Ayush"
-            >
-              <Mail className="w-4 h-4" />
-            </a>
-          </div>
-        )}
+              <a
+                href={`mailto:${siteContent.contact?.contactEmail || 'contact@growwithayush.com'}`}
+                aria-label="Email Ayush"
+                className="hover:text-[#1a1c19] dark:hover:text-white transition-colors p-1"
+                title="Email Ayush"
+              >
+                <Mail className="w-4 h-4" />
+              </a>
+            </>
+          )}
+
+          <button
+            onClick={() => setCurrentView('admin')}
+            aria-label="Studio Admin"
+            className="text-xs hover:text-[#2d5342] dark:hover:text-[#528c70] flex items-center gap-1 opacity-70 hover:opacity-100 transition-all p-1 cursor-pointer ml-1"
+            title="Studio Admin Portal"
+          >
+            <Lock className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Admin</span>
+          </button>
+        </div>
       </div>
     </footer>
   );
