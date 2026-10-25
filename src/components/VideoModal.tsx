@@ -37,7 +37,7 @@ export const VideoModal: React.FC = () => {
     if (url.includes('youtube.com/shorts/')) {
       const match = url.match(/\/shorts\/([a-zA-Z0-9_-]+)/);
       if (match && match[1]) {
-        return { type: 'embed', src: `https://www.youtube.com/embed/${match[1]}?autoplay=1&rel=0` };
+        return { type: 'embed', src: `https://www.youtube.com/embed/${match[1]}?autoplay=1&playsinline=1&rel=0` };
       }
     }
 
@@ -45,7 +45,7 @@ export const VideoModal: React.FC = () => {
     if (url.includes('youtube.com/watch')) {
       const match = url.match(/[?&]v=([a-zA-Z0-9_-]+)/);
       if (match && match[1]) {
-        return { type: 'embed', src: `https://www.youtube.com/embed/${match[1]}?autoplay=1&rel=0` };
+        return { type: 'embed', src: `https://www.youtube.com/embed/${match[1]}?autoplay=1&playsinline=1&rel=0` };
       }
     }
 
@@ -53,13 +53,14 @@ export const VideoModal: React.FC = () => {
     if (url.includes('youtu.be/')) {
       const match = url.match(/youtu\.be\/([a-zA-Z0-9_-]+)/);
       if (match && match[1]) {
-        return { type: 'embed', src: `https://www.youtube.com/embed/${match[1]}?autoplay=1&rel=0` };
+        return { type: 'embed', src: `https://www.youtube.com/embed/${match[1]}?autoplay=1&playsinline=1&rel=0` };
       }
     }
 
     // YouTube Embed link
     if (url.includes('youtube.com/embed/')) {
-      return { type: 'embed', src: url.includes('?') ? url : `${url}?autoplay=1&rel=0` };
+      const clean = url.split('?')[0];
+      return { type: 'embed', src: `${clean}?autoplay=1&playsinline=1&rel=0` };
     }
 
     // Vimeo: https://vimeo.com/123456789
@@ -162,7 +163,7 @@ export const VideoModal: React.FC = () => {
                 src={embedInfo.src}
                 title={project.title}
                 className="w-full h-full border-0"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
               />
             ) : embedInfo.type === 'direct' && embedInfo.src && !hasVideoError ? (
@@ -170,6 +171,7 @@ export const VideoModal: React.FC = () => {
                 src={embedInfo.src}
                 controls
                 autoPlay
+                playsInline
                 className="w-full h-full object-contain"
                 poster={project.thumbnailUrl}
                 onError={() => setHasVideoError(true)}

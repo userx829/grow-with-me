@@ -117,12 +117,12 @@ export const PortfolioSection: React.FC = () => {
                 >
                   {/* Thumbnail Container: dynamically 16:9 for long-form horizontal, 9:16 for vertical shorts */}
                   <div className={`relative overflow-hidden w-full ${isVertical ? 'aspect-[9/16] max-h-[520px]' : 'aspect-video'} bg-[#2d5342]/10 dark:bg-[#2a302a]`}>
-                    <div
-                      className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-105"
-                      style={{
-                        backgroundImage: `url('${project.thumbnailUrl}')`,
-                        backgroundColor: '#2d5342'
-                      }}
+                    <img
+                      src={project.thumbnailUrl}
+                      alt={project.title}
+                      loading="lazy"
+                      decoding="async"
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                     />
 
                     {/* Dark hover overlay with play icon */}

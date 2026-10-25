@@ -15,6 +15,7 @@ export const DEFAULT_SECTION_VISIBILITY: SectionVisibility = {
   showHeroCtaButtons: true,
   showHeroStats: true,
   showHeroFeaturedCard: true,
+  heroVideoAutoplay: true,
 
   showPortfolioKicker: true,
   showPortfolioTitle: true,

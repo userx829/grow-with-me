@@ -87,6 +87,7 @@ export interface SectionVisibility {
   showHeroCtaButtons?: boolean;
   showHeroStats?: boolean;
   showHeroFeaturedCard?: boolean;
+  heroVideoAutoplay?: boolean;
 
   // Portfolio granular controls
   showPortfolioKicker?: boolean;

@@ -1708,7 +1708,8 @@ export const AdminDashboard: React.FC = () => {
                           { key: 'showHeroSubtitle', label: 'Hero Subtitle Paragraph', desc: 'Narrative description text' },
                           { key: 'showHeroCtaButtons', label: 'CTA Action Buttons', desc: '"Explore Work" & "Contact"' },
                           { key: 'showHeroStats', label: 'Stats Counters (50M+ Views)', desc: '3 performance metric boxes' },
-                          { key: 'showHeroFeaturedCard', label: 'Featured Showreel Card', desc: 'Right column interactive card' }
+                          { key: 'showHeroFeaturedCard', label: 'Featured Showreel Card', desc: 'Right column interactive card' },
+                          { key: 'heroVideoAutoplay', label: 'Automatic Video Playback for Visitors', desc: 'Auto-streams featured showreel video on page load' }
                         ].map(elem => {
                           const isElemVisible = (contentForm.visibility as any)?.[elem.key] !== false;
                           return (
