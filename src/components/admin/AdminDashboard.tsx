@@ -255,22 +255,50 @@ export const AdminDashboard: React.FC = () => {
     });
   };
 
-  // Helper to extract YouTube video ID from various link formats
+  // Helper to extract YouTube video ID from various link formats (including YouTube Shorts, youtu.be, embed, etc.)
   const extractYouTubeId = (url: string): string | null => {
-    if (!url) return null;
-    const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
-    return match ? match[1] : null;
+    if (!url || typeof url !== 'string') return null;
+    const cleanUrl = url.trim();
+
+    // 1. YouTube Shorts: youtube.com/shorts/VIDEO_ID or m.youtube.com/shorts/VIDEO_ID
+    const shortsMatch = cleanUrl.match(/(?:youtube\.com|m\.youtube\.com)\/shorts\/([a-zA-Z0-9_-]{11})/);
+    if (shortsMatch && shortsMatch[1]) return shortsMatch[1];
+
+    // 2. Short link: youtu.be/VIDEO_ID
+    const youtuBeMatch = cleanUrl.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+    if (youtuBeMatch && youtuBeMatch[1]) return youtuBeMatch[1];
+
+    // 3. Watch: youtube.com/watch?v=VIDEO_ID
+    const watchMatch = cleanUrl.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+    if (watchMatch && watchMatch[1]) return watchMatch[1];
+
+    // 4. Embed: youtube.com/embed/VIDEO_ID
+    const embedMatch = cleanUrl.match(/youtube(?:-nocookie)?\.com\/embed\/([a-zA-Z0-9_-]{11})/);
+    if (embedMatch && embedMatch[1]) return embedMatch[1];
+
+    // 5. Fallback regex for all variants
+    const fallbackMatch = cleanUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|shorts\/|watch\?v=|watch\?.+&v=))([a-zA-Z0-9_-]{11})/);
+    return fallbackMatch ? fallbackMatch[1] : null;
   };
 
-  // Auto-fetch YouTube HD thumbnail
+  // Auto-fetch YouTube HD thumbnail (supports Shorts & regular videos with automatic fallback)
   const handleFetchYouTubeThumbnail = () => {
     const ytId = extractYouTubeId(formData.videoUrl || '');
     if (ytId) {
+      const isShort = formData.videoUrl?.includes('/shorts/') || formData.aspectRatio === '9:16' || formData.category === 'shorts';
       const ytThumb = `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`;
-      setFormData(prev => ({ ...prev, thumbnailUrl: ytThumb }));
-      showToast('Grabbed YouTube HD thumbnail! Visible to clients worldwide.');
+      setFormData(prev => ({
+        ...prev,
+        thumbnailUrl: ytThumb,
+        ...(isShort ? {
+          aspectRatio: '9:16',
+          category: 'shorts',
+          categoryLabel: prev.category === 'youtube' ? 'Shorts & Reels' : prev.categoryLabel
+        } : {})
+      }));
+      showToast(`Grabbed YouTube ${isShort ? 'Shorts' : 'HD'} thumbnail! Visible to clients worldwide.`);
     } else {
-      showToast('Please enter a valid YouTube video link first');
+      showToast('Please enter a valid YouTube link (supports YouTube Shorts, youtu.be, or regular links)');
     }
   };
 
@@ -989,16 +1017,22 @@ export const AdminDashboard: React.FC = () => {
                     onChange={e => {
                       const val = e.target.value;
                       const ytId = extractYouTubeId(val);
+                      const isShort = val.includes('/shorts/');
                       setFormData(prev => ({
                         ...prev,
                         videoUrl: val,
                         videoType: 'direct',
+                        ...(isShort ? {
+                          aspectRatio: '9:16',
+                          category: 'shorts',
+                          categoryLabel: prev.category === 'youtube' ? 'Shorts & Reels' : prev.categoryLabel
+                        } : {}),
                         ...(ytId && (!prev.thumbnailUrl || prev.thumbnailUrl.includes('googleusercontent.com') || prev.thumbnailUrl.includes('img.youtube.com'))
                           ? { thumbnailUrl: `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg` }
                           : {})
                       }));
                     }}
-                    placeholder="https://youtube.com/watch?v=... or https://vimeo.com/... or MP4 link"
+                    placeholder="https://youtube.com/shorts/... or https://youtube.com/watch?v=... or MP4 link"
                     className="w-full bg-[#fafaf5] dark:bg-[#151715] px-3.5 py-2.5 rounded-xl text-xs text-[#1a1c19] dark:text-[#f1f1ec] border border-[#eeeee9] dark:border-[#2a302a] focus:outline-none focus:ring-2 focus:ring-[#2d5342]"
                   />
 
@@ -1382,6 +1416,12 @@ export const AdminDashboard: React.FC = () => {
                         <img
                           src={formData.thumbnailUrl}
                           alt={formData.title}
+                          onError={e => {
+                            const target = e.currentTarget;
+                            if (target.src.includes('maxresdefault.jpg')) {
+                              target.src = target.src.replace('maxresdefault.jpg', 'hqdefault.jpg');
+                            }
+                          }}
                           className="w-full h-full object-cover"
                         />
                         <div className="absolute inset-0 bg-black/25 flex items-center justify-center">

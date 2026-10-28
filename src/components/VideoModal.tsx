@@ -29,6 +29,9 @@ export const VideoModal: React.FC = () => {
 
   const project = activeProjectModal;
 
+  // Autoplay params (muted is required by browsers for autoplay to work)
+  const YT_PARAMS = 'autoplay=1&mute=1&playsinline=1&rel=0';
+
   // Determine embed or direct video source
   const getEmbedInfo = (url?: string): { type: 'embed' | 'direct' | 'none'; src: string; isBlob?: boolean } => {
     if (!url) return { type: 'none', src: '' };
@@ -37,7 +40,7 @@ export const VideoModal: React.FC = () => {
     if (url.includes('youtube.com/shorts/')) {
       const match = url.match(/\/shorts\/([a-zA-Z0-9_-]+)/);
       if (match && match[1]) {
-        return { type: 'embed', src: `https://www.youtube.com/embed/${match[1]}?autoplay=1&playsinline=1&rel=0` };
+        return { type: 'embed', src: `https://www.youtube.com/embed/${match[1]}?${YT_PARAMS}` };
       }
     }
 
@@ -45,7 +48,7 @@ export const VideoModal: React.FC = () => {
     if (url.includes('youtube.com/watch')) {
       const match = url.match(/[?&]v=([a-zA-Z0-9_-]+)/);
       if (match && match[1]) {
-        return { type: 'embed', src: `https://www.youtube.com/embed/${match[1]}?autoplay=1&playsinline=1&rel=0` };
+        return { type: 'embed', src: `https://www.youtube.com/embed/${match[1]}?${YT_PARAMS}` };
       }
     }
 
@@ -53,14 +56,14 @@ export const VideoModal: React.FC = () => {
     if (url.includes('youtu.be/')) {
       const match = url.match(/youtu\.be\/([a-zA-Z0-9_-]+)/);
       if (match && match[1]) {
-        return { type: 'embed', src: `https://www.youtube.com/embed/${match[1]}?autoplay=1&playsinline=1&rel=0` };
+        return { type: 'embed', src: `https://www.youtube.com/embed/${match[1]}?${YT_PARAMS}` };
       }
     }
 
     // YouTube Embed link
     if (url.includes('youtube.com/embed/')) {
       const clean = url.split('?')[0];
-      return { type: 'embed', src: `${clean}?autoplay=1&playsinline=1&rel=0` };
+      return { type: 'embed', src: `${clean}?${YT_PARAMS}` };
     }
 
     // Vimeo: https://vimeo.com/123456789
@@ -68,7 +71,7 @@ export const VideoModal: React.FC = () => {
       const match = url.match(/vimeo\.com\/(?:channels\/(?:\w+\/)?|groups\/([^\/]*)\/videos\/|album\/(\d+)\/video\/|video\/|)(\d+)/);
       const vimeoId = match?.[3] || url.split('vimeo.com/')[1]?.split('?')[0]?.split('/')[0];
       if (vimeoId) {
-        return { type: 'embed', src: `https://player.vimeo.com/video/${vimeoId}?autoplay=1` };
+        return { type: 'embed', src: `https://player.vimeo.com/video/${vimeoId}?autoplay=1&muted=1` };
       }
     }
 
@@ -160,6 +163,7 @@ export const VideoModal: React.FC = () => {
           }`}>
             {embedInfo.type === 'embed' ? (
               <iframe
+                key={embedInfo.src}
                 src={embedInfo.src}
                 title={project.title}
                 className="w-full h-full border-0"
@@ -171,6 +175,7 @@ export const VideoModal: React.FC = () => {
                 src={embedInfo.src}
                 controls
                 autoPlay
+                muted
                 playsInline
                 className="w-full h-full object-contain"
                 poster={project.thumbnailUrl}

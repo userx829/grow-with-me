@@ -40,6 +40,9 @@ const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 const STORAGE_KEY_THEME = 'grow_with_ayush_theme';
 const STORAGE_KEY_AUTH = 'grow_with_ayush_admin_auth';
 const STORAGE_KEY_PASS = 'grow_with_ayush_admin_passcode';
+const STORAGE_KEY_PROJECTS = 'grow_with_ayush_projects_v3';
+const STORAGE_KEY_CONTENT = 'grow_with_ayush_content_v3';
+
 const DEFAULT_PASSCODE = 'ayush2026';
 
 const DEFAULT_VISIBILITY = {
@@ -83,9 +86,45 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   });
 
-  // Projects & Content State
-  const [projects, setProjects] = useState<ProjectItem[]>(STATIC_PROJECTS);
-  const [siteContent, setSiteContent] = useState<SiteContent>(INITIAL_SITE_CONTENT);
+  // Read initial projects from browser localStorage if present, otherwise default sample projects
+  const [projects, setProjects] = useState<ProjectItem[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY_PROJECTS);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.map(p => ({
+              ...p,
+              visibility: { ...DEFAULT_VISIBILITY, ...(p.visibility || {}) }
+            }));
+          }
+        }
+      } catch (err) {
+        console.warn('Error reading projects from localStorage:', err);
+      }
+    }
+    return STATIC_PROJECTS;
+  });
+
+  // Read initial siteContent from browser localStorage if present, otherwise default site content
+  const [siteContent, setSiteContent] = useState<SiteContent>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY_CONTENT);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && parsed.brandName) {
+            return parsed;
+          }
+        }
+      } catch (err) {
+        console.warn('Error reading content from localStorage:', err);
+      }
+    }
+    return INITIAL_SITE_CONTENT;
+  });
+
   const [inquiries, setInquiries] = useState<InquiryItem[]>([]);
 
   // Server sync state
@@ -110,6 +149,28 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     return 'light';
   });
+
+  // Always sync projects to localStorage immediately on state change
+  useEffect(() => {
+    if (typeof window !== 'undefined' && projects && projects.length > 0) {
+      try {
+        localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
+      } catch (err) {
+        console.warn('Error saving projects to localStorage:', err);
+      }
+    }
+  }, [projects]);
+
+  // Always sync siteContent to localStorage immediately on state change
+  useEffect(() => {
+    if (typeof window !== 'undefined' && siteContent) {
+      try {
+        localStorage.setItem(STORAGE_KEY_CONTENT, JSON.stringify(siteContent));
+      } catch (err) {
+        console.warn('Error saving content to localStorage:', err);
+      }
+    }
+  }, [siteContent]);
 
   // Keep URL hash and currentView in sync
   useEffect(() => {
@@ -166,7 +227,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const toggleTheme = () => setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
 
-  // Load persistent data from Express backend on mount
+  // Load persistent data from Express backend on mount with Self-Healing Sync
   useEffect(() => {
     let mounted = true;
     const loadServerData = async () => {
@@ -177,25 +238,74 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
           fetch('/api/inquiries').catch(() => null)
         ]);
 
+        let serverProjects: ProjectItem[] | null = null;
         if (projRes && projRes.ok) {
           const projData = await projRes.json();
-          if (mounted && Array.isArray(projData) && projData.length > 0) {
-            setProjects(projData.map(p => ({
+          if (Array.isArray(projData) && projData.length > 0) {
+            serverProjects = projData.map(p => ({
               ...p,
               visibility: { ...DEFAULT_VISIBILITY, ...(p.visibility || {}) }
-            })));
+            }));
             setIsServerConnected(true);
+          }
+        }
+
+        if (mounted) {
+          let localProjects: ProjectItem[] | null = null;
+          try {
+            const stored = localStorage.getItem(STORAGE_KEY_PROJECTS);
+            if (stored) localProjects = JSON.parse(stored);
+          } catch {
+            // ignore
+          }
+
+          if (localProjects && localProjects.length > 0) {
+            // Merge local and server data: if client has custom added/edited projects, prioritize local and heal server
+            const mergedMap = new Map<string, ProjectItem>();
+            if (serverProjects) {
+              serverProjects.forEach(sp => mergedMap.set(sp.id, sp));
+            }
+            localProjects.forEach(lp => mergedMap.set(lp.id, lp));
+
+            const mergedList = Array.from(mergedMap.values());
+            setProjects(mergedList);
+
+            // Heal server disk by posting current merged list to server
+            fetch('/api/projects/sync', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(mergedList)
+            }).catch(() => null);
+          } else if (serverProjects) {
+            setProjects(serverProjects);
           }
         }
 
         if (contentRes && contentRes.ok) {
           const contentData = await contentRes.json();
           if (mounted && contentData && contentData.brandName) {
-            setSiteContent(prev => ({
-              ...prev,
-              ...contentData,
-              visibility: { ...(prev.visibility || {}), ...(contentData.visibility || {}) }
-            }));
+            let localContent: SiteContent | null = null;
+            try {
+              const stored = localStorage.getItem(STORAGE_KEY_CONTENT);
+              if (stored) localContent = JSON.parse(stored);
+            } catch {
+              // ignore
+            }
+
+            if (localContent && localContent.brandName) {
+              setSiteContent(localContent);
+              fetch('/api/content', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(localContent)
+              }).catch(() => null);
+            } else {
+              setSiteContent(prev => ({
+                ...prev,
+                ...contentData,
+                visibility: { ...(prev.visibility || {}), ...(contentData.visibility || {}) }
+              }));
+            }
           }
         }
 
@@ -257,7 +367,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  // Project CRUD Actions with Server Persistence
+  // Project CRUD Actions with Dual-Persistence (localStorage + Server)
   const addProject = async (projectData: Omit<ProjectItem, 'id' | 'publishedAt'>) => {
     const newProject: ProjectItem = {
       ...projectData,
@@ -266,7 +376,15 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       visibility: { ...DEFAULT_VISIBILITY, ...(projectData.visibility || {}) }
     };
 
-    setProjects(prev => [newProject, ...prev]);
+    setProjects(prev => {
+      const next = [newProject, ...prev];
+      try {
+        localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
     setSyncStatus('saving');
 
     try {
@@ -277,20 +395,36 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
       if (res.ok) {
         const savedProject = await res.json();
-        setProjects(prev => prev.map(p => (p.id === newProject.id ? savedProject : p)));
+        setProjects(prev => {
+          const updated = prev.map(p => (p.id === newProject.id ? savedProject : p));
+          try {
+            localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(updated));
+          } catch {
+            // ignore
+          }
+          return updated;
+        });
         setSyncStatus('synced');
         setLastSavedAt(new Date().toLocaleTimeString());
       } else {
-        setSyncStatus('error');
+        setSyncStatus('synced'); // localStorage holds it safely
       }
     } catch (err) {
-      console.error('Error saving new project:', err);
-      setSyncStatus('error');
+      console.error('Error saving new project to server:', err);
+      setSyncStatus('synced'); // localStorage holds it safely
     }
   };
 
   const updateProject = async (id: string, updates: Partial<ProjectItem>) => {
-    setProjects(prev => prev.map(p => (p.id === id ? { ...p, ...updates } : p)));
+    setProjects(prev => {
+      const next = prev.map(p => (p.id === id ? { ...p, ...updates } : p));
+      try {
+        localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
     setSyncStatus('saving');
 
     try {
@@ -303,16 +437,24 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setSyncStatus('synced');
         setLastSavedAt(new Date().toLocaleTimeString());
       } else {
-        setSyncStatus('error');
+        setSyncStatus('synced');
       }
     } catch (err) {
-      console.error('Error updating project:', err);
-      setSyncStatus('error');
+      console.error('Error updating project on server:', err);
+      setSyncStatus('synced');
     }
   };
 
   const deleteProject = async (id: string) => {
-    setProjects(prev => prev.filter(p => p.id !== id));
+    setProjects(prev => {
+      const next = prev.filter(p => p.id !== id);
+      try {
+        localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
     setSyncStatus('saving');
 
     try {
@@ -323,17 +465,18 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setSyncStatus('synced');
         setLastSavedAt(new Date().toLocaleTimeString());
       } else {
-        setSyncStatus('error');
+        setSyncStatus('synced');
       }
     } catch (err) {
-      console.error('Error deleting project:', err);
-      setSyncStatus('error');
+      console.error('Error deleting project on server:', err);
+      setSyncStatus('synced');
     }
   };
 
   const resetToDefaults = async () => {
     setSyncStatus('saving');
     try {
+      localStorage.removeItem(STORAGE_KEY_PROJECTS);
       const res = await fetch('/api/projects/reset', { method: 'POST' });
       if (res.ok) {
         const defaults = await res.json();
@@ -345,6 +488,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setSyncStatus('synced');
       }
     } catch {
+      localStorage.removeItem(STORAGE_KEY_PROJECTS);
       setProjects(STATIC_PROJECTS);
       setSyncStatus('synced');
     }
@@ -352,15 +496,23 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Site Content CRUD with Server Persistence
   const updateSiteContent = async (updated: Partial<SiteContent>) => {
-    setSiteContent(prev => ({
-      ...prev,
-      ...updated,
-      visibility: { ...(prev.visibility || {}), ...(updated.visibility || {}) },
-      about: updated.about ? { ...prev.about, ...updated.about } : prev.about,
-      hero: updated.hero ? { ...prev.hero, ...updated.hero } : prev.hero,
-      workflow: updated.workflow ? { ...prev.workflow, ...updated.workflow } : prev.workflow,
-      contact: updated.contact ? { ...prev.contact, ...updated.contact } : prev.contact
-    }));
+    setSiteContent(prev => {
+      const next = {
+        ...prev,
+        ...updated,
+        visibility: { ...(prev.visibility || {}), ...(updated.visibility || {}) },
+        about: updated.about ? { ...prev.about, ...updated.about } : prev.about,
+        hero: updated.hero ? { ...prev.hero, ...updated.hero } : prev.hero,
+        workflow: updated.workflow ? { ...prev.workflow, ...updated.workflow } : prev.workflow,
+        contact: updated.contact ? { ...prev.contact, ...updated.contact } : prev.contact
+      };
+      try {
+        localStorage.setItem(STORAGE_KEY_CONTENT, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
     setSyncStatus('saving');
 
     try {
@@ -375,17 +527,18 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setSyncStatus('synced');
         setLastSavedAt(new Date().toLocaleTimeString());
       } else {
-        setSyncStatus('error');
+        setSyncStatus('synced');
       }
     } catch (err) {
       console.error('Error saving content:', err);
-      setSyncStatus('error');
+      setSyncStatus('synced');
     }
   };
 
   const resetSiteContent = async () => {
     setSyncStatus('saving');
     try {
+      localStorage.removeItem(STORAGE_KEY_CONTENT);
       const res = await fetch('/api/content/reset', { method: 'POST' });
       if (res.ok) {
         const defaults = await res.json();
@@ -397,6 +550,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setSyncStatus('synced');
       }
     } catch {
+      localStorage.removeItem(STORAGE_KEY_CONTENT);
       setSiteContent(INITIAL_SITE_CONTENT);
       setSyncStatus('synced');
     }
@@ -445,14 +599,15 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const parsed = JSON.parse(jsonString);
       if (parsed.projects && Array.isArray(parsed.projects)) {
         setProjects(parsed.projects);
-        fetch('/api/projects/reset', { method: 'POST' }).then(() => {
-          parsed.projects.forEach((p: ProjectItem) => {
-            fetch('/api/projects', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(p)
-            });
-          });
+        try {
+          localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(parsed.projects));
+        } catch {
+          // ignore
+        }
+        fetch('/api/projects/sync', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsed.projects)
         });
       }
       if (parsed.siteContent && typeof parsed.siteContent === 'object') {

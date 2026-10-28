@@ -102,7 +102,9 @@ function readProjects(): ProjectItem[] {
 
 function writeProjects(projects: ProjectItem[]) {
   try {
-    fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2), 'utf-8');
+    const json = JSON.stringify(projects, null, 2);
+    fs.writeFileSync(PROJECTS_FILE, json, 'utf-8');
+    fs.writeFileSync(PROJECTS_DEFAULT_FILE, json, 'utf-8');
   } catch (err) {
     console.error('Error writing projects.json:', err);
   }
@@ -136,7 +138,9 @@ function readContent(): SiteContent {
 
 function writeContent(content: SiteContent) {
   try {
-    fs.writeFileSync(CONTENT_FILE, JSON.stringify(content, null, 2), 'utf-8');
+    const json = JSON.stringify(content, null, 2);
+    fs.writeFileSync(CONTENT_FILE, json, 'utf-8');
+    fs.writeFileSync(CONTENT_DEFAULT_FILE, json, 'utf-8');
   } catch (err) {
     console.error('Error writing content.json:', err);
   }
@@ -217,6 +221,16 @@ app.post('/api/projects/reset', (_req: Request, res: Response) => {
   const defaults = readDefaultProjects();
   writeProjects(defaults);
   res.json(defaults);
+});
+
+// Bulk sync projects from client browser to server
+app.put('/api/projects/sync', (req: Request, res: Response) => {
+  const projectsList = req.body;
+  if (Array.isArray(projectsList) && projectsList.length > 0) {
+    writeProjects(projectsList);
+    return res.json({ success: true, count: projectsList.length });
+  }
+  res.status(400).json({ error: 'Expected non-empty array of projects' });
 });
 
 // 2. Site Content API
