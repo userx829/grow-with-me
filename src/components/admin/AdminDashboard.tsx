@@ -53,8 +53,11 @@ export const AdminDashboard: React.FC = () => {
     logoutAdmin,
     changeAdminPassword,
     isServerConnected,
+    storageMode,
+    isSupabaseConnected,
     syncStatus,
-    lastSavedAt
+    lastSavedAt,
+    checkServerStatus
   } = useProjects();
 
   const [activeTab, setActiveTab] = useState<'catalog' | 'editor' | 'site-content' | 'inquiries' | 'security'>('catalog');
@@ -281,14 +284,65 @@ export const AdminDashboard: React.FC = () => {
     return fallbackMatch ? fallbackMatch[1] : null;
   };
 
-  // Auto-fetch YouTube HD thumbnail (supports Shorts & regular videos with automatic fallback)
-  const handleFetchYouTubeThumbnail = () => {
-    const ytId = extractYouTubeId(formData.videoUrl || '');
+  const [isFetchingYtInfo, setIsFetchingYtInfo] = useState(false);
+
+  // Auto-fetch complete YouTube Video Info (Title, HD Thumbnail, Views Count, Duration, Aspect Ratio)
+  const autoFetchYouTubeInfo = async (urlOverride?: string) => {
+    const targetUrl = urlOverride || formData.videoUrl || formData.thumbnailUrl;
+    const ytId = extractYouTubeId(targetUrl || '');
+    if (!ytId) {
+      showToast('Please enter a valid YouTube link (supports watch, Shorts, live, or youtu.be)');
+      return;
+    }
+
+    setIsFetchingYtInfo(true);
+    showToast('Fetching YouTube video title, thumbnail, views, duration & ratio...');
+
+    try {
+      const res = await fetch('/api/youtube/info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: targetUrl })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setFormData(prev => ({
+            ...prev,
+            videoUrl: targetUrl,
+            title: data.title || prev.title,
+            thumbnailUrl: data.thumbnailUrl || `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`,
+            views: data.views || prev.views || '100K',
+            duration: data.duration || prev.duration || '10 min',
+            aspectRatio: data.aspectRatio || (data.isShort ? '9:16' : '16:9'),
+            category: data.category || (data.isShort ? 'shorts' : 'youtube'),
+            categoryLabel: data.categoryLabel || (data.isShort ? 'Shorts & Reels' : 'YouTube Long-form'),
+            subtitle: data.authorName ? `by ${data.authorName}` : (prev.subtitle || 'Creator Release')
+          }));
+          showToast(`✅ Loaded YouTube Details! "${(data.title || '').slice(0, 25)}..." | ${data.views} views | ${data.duration}`);
+        }
+      } else {
+        handleFetchYouTubeThumbnail(targetUrl);
+      }
+    } catch (err) {
+      console.warn('YouTube auto-fetch error:', err);
+      handleFetchYouTubeThumbnail(targetUrl);
+    } finally {
+      setIsFetchingYtInfo(false);
+    }
+  };
+
+  // Auto-fetch YouTube HD thumbnail fallback
+  const handleFetchYouTubeThumbnail = (urlOverride?: string) => {
+    const targetUrl = urlOverride || formData.videoUrl || formData.thumbnailUrl;
+    const ytId = extractYouTubeId(targetUrl || '');
     if (ytId) {
-      const isShort = formData.videoUrl?.includes('/shorts/') || formData.aspectRatio === '9:16' || formData.category === 'shorts';
+      const isShort = targetUrl?.includes('/shorts/') || formData.aspectRatio === '9:16' || formData.category === 'shorts';
       const ytThumb = `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`;
       setFormData(prev => ({
         ...prev,
+        videoUrl: targetUrl,
         thumbnailUrl: ytThumb,
         ...(isShort ? {
           aspectRatio: '9:16',
@@ -391,17 +445,55 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Handle JSON Import
+  // Export backup using /api/projects/export
+  const handleExportBackup = async () => {
+    try {
+      const res = await fetch('/api/projects/export');
+      if (res.ok) {
+        const data = await res.json();
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ayush-portfolio-backup-${new Date().toISOString().split('T')[0]}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Exported backup successfully from server database!');
+      } else {
+        exportData();
+      }
+    } catch {
+      exportData();
+    }
+  };
+
+  // Handle JSON Import Backup via /api/projects/import
   const handleJsonImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         const text = event.target?.result as string;
-        if (importData(text)) {
-          showToast('Catalog and content imported successfully!');
-        } else {
-          alert('Invalid JSON structure. Please use a valid exported JSON file.');
+        try {
+          const parsed = JSON.parse(text);
+          const res = await fetch('/api/projects/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(parsed)
+          });
+          if (res.ok) {
+            importData(text);
+            showToast('Backup imported and saved to server database permanently!');
+          } else {
+            importData(text);
+            showToast('Backup imported locally!');
+          }
+        } catch {
+          if (importData(text)) {
+            showToast('Catalog and content imported successfully!');
+          } else {
+            alert('Invalid JSON structure. Please use a valid exported JSON file.');
+          }
         }
       };
       reader.readAsText(file);
@@ -446,15 +538,20 @@ export const AdminDashboard: React.FC = () => {
               <span className="text-[11px] font-bold bg-[#2d5342] text-white px-2 py-0.5 rounded-full">
                 ADMIN
               </span>
-              <span
-                className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border transition-all ${
+              <button
+                type="button"
+                onClick={async () => {
+                  await checkServerStatus();
+                  showToast(`DB Status: ${isServerConnected ? 'Online & Persistent' : 'Disconnected'} | ${storageMode}`);
+                }}
+                className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border transition-all cursor-pointer ${
                   syncStatus === 'saving'
                     ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
                     : syncStatus === 'error'
                     ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
                     : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
                 }`}
-                title={lastSavedAt ? `Last saved at ${lastSavedAt}` : 'Live server database connected'}
+                title={`Click to re-check status. Current mode: ${storageMode}`}
               >
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${
@@ -466,11 +563,13 @@ export const AdminDashboard: React.FC = () => {
                   }`}
                 />
                 {syncStatus === 'saving'
-                  ? 'Saving to Database...'
+                  ? 'Saving to Storage...'
+                  : isSupabaseConnected
+                  ? 'Database: Supabase Active'
                   : isServerConnected
-                  ? 'Cloud Database: Synced & Persistent'
+                  ? 'Database: Disk Storage Active'
                   : 'Database: Persistent'}
-              </span>
+              </button>
             </div>
             <p className="text-xs sm:text-sm text-[#414844] dark:text-[#b9c1ba] mt-1">
               Upload videos, edit portfolio items, and customize website text with real-time preview.
@@ -496,21 +595,21 @@ export const AdminDashboard: React.FC = () => {
             </button>
 
             <button
-              onClick={exportData}
-              className="bg-[#eeeee9] dark:bg-[#2a302a] text-[#1a1c19] dark:text-[#f1f1ec] px-3.5 py-2 rounded-xl text-xs font-medium hover:bg-[#e2e3de] dark:hover:bg-[#333a33] transition-colors flex items-center gap-1.5"
-              title="Download backup JSON"
+              onClick={handleExportBackup}
+              className="bg-[#eeeee9] dark:bg-[#2a302a] text-[#1a1c19] dark:text-[#f1f1ec] px-3.5 py-2 rounded-xl text-xs font-medium hover:bg-[#e2e3de] dark:hover:bg-[#333a33] transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="Download backup JSON using /api/projects/export"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>Export</span>
+              <span>Export Backup</span>
             </button>
 
             <button
               onClick={() => jsonImportRef.current?.click()}
-              className="bg-[#eeeee9] dark:bg-[#2a302a] text-[#1a1c19] dark:text-[#f1f1ec] px-3.5 py-2 rounded-xl text-xs font-medium hover:bg-[#e2e3de] dark:hover:bg-[#333a33] transition-colors flex items-center gap-1.5"
-              title="Restore from JSON"
+              className="bg-[#eeeee9] dark:bg-[#2a302a] text-[#1a1c19] dark:text-[#f1f1ec] px-3.5 py-2 rounded-xl text-xs font-medium hover:bg-[#e2e3de] dark:hover:bg-[#333a33] transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="Restore from JSON backup using /api/projects/import"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span>Import</span>
+              <span>Import Backup</span>
             </button>
             <input
               type="file"
@@ -821,6 +920,53 @@ export const AdminDashboard: React.FC = () => {
               </div>
 
               <form onSubmit={handleFormSubmit} className="space-y-5">
+                {/* Quick YouTube Auto-Importer Banner */}
+                <div className="bg-gradient-to-r from-[#2d5342]/10 via-[#456b59]/10 to-amber-500/10 dark:from-[#2d5342]/20 dark:via-[#456b59]/20 dark:to-amber-500/20 p-4 rounded-2xl border border-[#2d5342]/20 dark:border-[#528c70]/30 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-[#1a1c19] dark:text-[#f1f1ec] flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
+                      <span>Quick Import: Paste YouTube Link to Auto-Fill All Details</span>
+                    </label>
+                    <span className="text-[10px] font-semibold text-[#2d5342] dark:text-[#528c70] bg-[#fafaf5] dark:bg-[#151715] px-2 py-0.5 rounded-full border border-[#2d5342]/20">
+                      Auto-Fetches Title, Thumbnail, Views &amp; Time
+                    </span>
+                  </div>
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <div className="relative flex-1">
+                      <Youtube className="w-4 h-4 text-rose-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="url"
+                        placeholder="Paste YouTube video or Shorts link here (e.g. https://www.youtube.com/watch?v=...)"
+                        className="w-full bg-[#fafaf5] dark:bg-[#151715] pl-9 pr-3.5 py-2.5 rounded-xl text-xs text-[#1a1c19] dark:text-[#f1f1ec] border border-[#eeeee9] dark:border-[#2a302a] focus:outline-none focus:ring-2 focus:ring-[#2d5342]"
+                        onPaste={e => {
+                          const pasted = e.clipboardData.getData('text');
+                          if (pasted && extractYouTubeId(pasted)) {
+                            autoFetchYouTubeInfo(pasted);
+                          }
+                        }}
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (val && extractYouTubeId(val)) {
+                            autoFetchYouTubeInfo(val);
+                          }
+                        }}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isFetchingYtInfo}
+                      onClick={() => autoFetchYouTubeInfo()}
+                      className="bg-[#2d5342] text-white px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-[#456b59] transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer whitespace-nowrap active:scale-95 disabled:opacity-50"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                      <span>{isFetchingYtInfo ? 'Fetching...' : 'Auto-Fetch Details'}</span>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-[#414844] dark:text-[#b9c1ba]">
+                    Pasting a YouTube link here automatically extracts the HD cover thumbnail, video title, channel name, views count, duration, and aspect ratio (16:9 vs 9:16 Shorts).
+                  </p>
+                </div>
+
                 {/* Title & Subtitle */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-[#1a1c19] dark:text-[#f1f1ec]">
@@ -931,12 +1077,13 @@ export const AdminDashboard: React.FC = () => {
                       {extractYouTubeId(formData.videoUrl || '') && (
                         <button
                           type="button"
-                          onClick={handleFetchYouTubeThumbnail}
-                          className="text-[11px] font-bold bg-[#2d5342] text-white hover:bg-[#456b59] px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-sm active:scale-95"
-                          title="Instantly retrieve YouTube's official HD thumbnail"
+                          disabled={isFetchingYtInfo}
+                          onClick={() => autoFetchYouTubeInfo()}
+                          className="text-[11px] font-bold bg-[#2d5342] text-white hover:bg-[#456b59] px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-sm active:scale-95 disabled:opacity-50"
+                          title="Instantly retrieve YouTube's title, views, duration & official HD thumbnail"
                         >
                           <Youtube className="w-3.5 h-3.5" />
-                          <span>Auto-Grab YouTube Thumbnail</span>
+                          <span>{isFetchingYtInfo ? 'Fetching...' : 'Auto-Fetch All Details'}</span>
                         </button>
                       )}
 
@@ -976,7 +1123,7 @@ export const AdminDashboard: React.FC = () => {
                     </p>
                     <ul className="pl-3.5 list-disc space-y-0.5">
                       <li>
-                        <strong>YouTube Thumbnail (Recommended):</strong> Clicking <em>Auto-Grab</em> uses YouTube&apos;s global CDN (<code className="font-mono text-[9px] bg-gray-100 dark:bg-gray-800 px-1 py-0.2 rounded">img.youtube.com</code>). 100% visible to all clients worldwide with zero load time.
+                        <strong>YouTube Details Auto-Sync:</strong> Pasting a YouTube link auto-fetches title, views count, duration, and HD thumbnail.
                       </li>
                       <li>
                         <strong>Custom Upload:</strong> Uploading from your PC automatically compresses and embeds the photo directly into your site data so visitors can see it.
@@ -993,14 +1140,30 @@ export const AdminDashboard: React.FC = () => {
                       <span>Video Source for Clients</span>
                     </label>
 
-                    <button
-                      type="button"
-                      onClick={() => videoFileInputRef.current?.click()}
-                      className="text-[11px] font-semibold text-[#875133] dark:text-[#feb692] flex items-center gap-1 hover:underline cursor-pointer bg-[#fafaf5] dark:bg-[#1c1f1c] px-2.5 py-1 rounded-lg border border-[#eeeee9] dark:border-[#2a302a]"
-                    >
-                      <Upload className="w-3 h-3" />
-                      <span>Attach local test file (PC)</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {extractYouTubeId(formData.videoUrl || '') && (
+                        <button
+                          type="button"
+                          disabled={isFetchingYtInfo}
+                          onClick={() => autoFetchYouTubeInfo()}
+                          className="text-[11px] font-bold bg-[#2d5342] text-white hover:bg-[#456b59] px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-sm active:scale-95 disabled:opacity-50"
+                          title="Auto-fetch Title, Thumbnail, Views, Duration & Aspect Ratio from YouTube"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                          <span>{isFetchingYtInfo ? 'Fetching...' : '⚡ Auto-Fetch Title, Views, Time & Thumbnail'}</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => videoFileInputRef.current?.click()}
+                        className="text-[11px] font-semibold text-[#875133] dark:text-[#feb692] flex items-center gap-1 hover:underline cursor-pointer bg-[#fafaf5] dark:bg-[#1c1f1c] px-2.5 py-1 rounded-lg border border-[#eeeee9] dark:border-[#2a302a]"
+                      >
+                        <Upload className="w-3 h-3" />
+                        <span>Attach local test file (PC)</span>
+                      </button>
+                    </div>
+
                     <input
                       type="file"
                       ref={videoFileInputRef}
@@ -1031,6 +1194,10 @@ export const AdminDashboard: React.FC = () => {
                           ? { thumbnailUrl: `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg` }
                           : {})
                       }));
+
+                      if (ytId) {
+                        autoFetchYouTubeInfo(val);
+                      }
                     }}
                     placeholder="https://youtube.com/shorts/... or https://youtube.com/watch?v=... or MP4 link"
                     className="w-full bg-[#fafaf5] dark:bg-[#151715] px-3.5 py-2.5 rounded-xl text-xs text-[#1a1c19] dark:text-[#f1f1ec] border border-[#eeeee9] dark:border-[#2a302a] focus:outline-none focus:ring-2 focus:ring-[#2d5342]"
@@ -1043,7 +1210,11 @@ export const AdminDashboard: React.FC = () => {
                     </span>
                     <button
                       type="button"
-                      onClick={() => setFormData({ ...formData, videoUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' })}
+                      onClick={() => {
+                        const sampleUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+                        setFormData(prev => ({ ...prev, videoUrl: sampleUrl }));
+                        autoFetchYouTubeInfo(sampleUrl);
+                      }}
                       className="text-[10px] bg-[#fafaf5] dark:bg-[#151715] hover:bg-[#eeeee9] dark:hover:bg-[#2a302a] text-[#1a1c19] dark:text-[#f1f1ec] px-2 py-0.5 rounded-md border border-[#eeeee9] dark:border-[#2a302a] transition-colors cursor-pointer"
                     >
                       YouTube Example

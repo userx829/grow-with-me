@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { ProjectItem, InquiryItem, ServiceItem, SiteContent } from '../types';
-import { INITIAL_PROJECTS } from '../data/initialProjects';
 import { INITIAL_SITE_CONTENT } from '../data/initialContent';
 
 interface ProjectContextType {
@@ -31,8 +30,12 @@ interface ProjectContextType {
   logoutAdmin: () => void;
   changeAdminPassword: (newPassword: string) => void;
   isServerConnected: boolean;
+  storageMode: string;
+  isSupabaseConnected: boolean;
   syncStatus: 'synced' | 'saving' | 'error';
   lastSavedAt: string | null;
+  isLoading: boolean;
+  checkServerStatus: () => Promise<void>;
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
@@ -40,8 +43,6 @@ const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 const STORAGE_KEY_THEME = 'grow_with_ayush_theme';
 const STORAGE_KEY_AUTH = 'grow_with_ayush_admin_auth';
 const STORAGE_KEY_PASS = 'grow_with_ayush_admin_passcode';
-const STORAGE_KEY_PROJECTS = 'grow_with_ayush_projects_v3';
-const STORAGE_KEY_CONTENT = 'grow_with_ayush_content_v3';
 
 const DEFAULT_PASSCODE = 'ayush2026';
 
@@ -56,11 +57,6 @@ const DEFAULT_VISIBILITY = {
   showTechniques: true,
   isPublished: true
 };
-
-const STATIC_PROJECTS: ProjectItem[] = INITIAL_PROJECTS.map(p => ({
-  ...p,
-  visibility: { ...DEFAULT_VISIBILITY, ...(p.visibility || {}) }
-}));
 
 const getInitialView = (): 'portfolio' | 'admin' => {
   if (typeof window === 'undefined') return 'portfolio';
@@ -86,49 +82,16 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   });
 
-  // Read initial projects from browser localStorage if present, otherwise default sample projects
-  const [projects, setProjects] = useState<ProjectItem[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY_PROJECTS);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed.map(p => ({
-              ...p,
-              visibility: { ...DEFAULT_VISIBILITY, ...(p.visibility || {}) }
-            }));
-          }
-        }
-      } catch (err) {
-        console.warn('Error reading projects from localStorage:', err);
-      }
-    }
-    return STATIC_PROJECTS;
-  });
-
-  // Read initial siteContent from browser localStorage if present, otherwise default site content
-  const [siteContent, setSiteContent] = useState<SiteContent>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY_CONTENT);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (parsed && parsed.brandName) {
-            return parsed;
-          }
-        }
-      } catch (err) {
-        console.warn('Error reading content from localStorage:', err);
-      }
-    }
-    return INITIAL_SITE_CONTENT;
-  });
-
+  // Projects and Site Content state loaded directly from server API
+  const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [siteContent, setSiteContent] = useState<SiteContent>(INITIAL_SITE_CONTENT);
   const [inquiries, setInquiries] = useState<InquiryItem[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // Server sync state
   const [isServerConnected, setIsServerConnected] = useState<boolean>(false);
+  const [storageMode, setStorageMode] = useState<string>('Persistent Storage (data/projects.json)');
+  const [isSupabaseConnected, setIsSupabaseConnected] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'saving' | 'error'>('synced');
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
 
@@ -149,28 +112,6 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     return 'light';
   });
-
-  // Always sync projects to localStorage immediately on state change
-  useEffect(() => {
-    if (typeof window !== 'undefined' && projects && projects.length > 0) {
-      try {
-        localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
-      } catch (err) {
-        console.warn('Error saving projects to localStorage:', err);
-      }
-    }
-  }, [projects]);
-
-  // Always sync siteContent to localStorage immediately on state change
-  useEffect(() => {
-    if (typeof window !== 'undefined' && siteContent) {
-      try {
-        localStorage.setItem(STORAGE_KEY_CONTENT, JSON.stringify(siteContent));
-      } catch (err) {
-        console.warn('Error saving content to localStorage:', err);
-      }
-    }
-  }, [siteContent]);
 
   // Keep URL hash and currentView in sync
   useEffect(() => {
@@ -227,85 +168,61 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const toggleTheme = () => setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
 
-  // Load persistent data from Express backend on mount with Self-Healing Sync
+  const checkServerStatus = async () => {
+    try {
+      const statusRes = await fetch('/api/status').catch(() => null);
+      if (statusRes && statusRes.ok) {
+        const data = await statusRes.json();
+        if (data.storageMode) setStorageMode(data.storageMode);
+        setIsSupabaseConnected(Boolean(data.supabaseConnected));
+        setIsServerConnected(true);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  // Fetch data directly from backend Supabase API on mount
   useEffect(() => {
     let mounted = true;
+
     const loadServerData = async () => {
+      setIsLoading(true);
       try {
-        const [projRes, contentRes, inqRes] = await Promise.all([
+        const [projRes, contentRes, inqRes, statusRes] = await Promise.all([
           fetch('/api/projects').catch(() => null),
           fetch('/api/content').catch(() => null),
-          fetch('/api/inquiries').catch(() => null)
+          fetch('/api/inquiries').catch(() => null),
+          fetch('/api/status').catch(() => null)
         ]);
 
-        let serverProjects: ProjectItem[] | null = null;
-        if (projRes && projRes.ok) {
-          const projData = await projRes.json();
-          if (Array.isArray(projData) && projData.length > 0) {
-            serverProjects = projData.map(p => ({
-              ...p,
-              visibility: { ...DEFAULT_VISIBILITY, ...(p.visibility || {}) }
-            }));
-            setIsServerConnected(true);
+        if (statusRes && statusRes.ok) {
+          const statusData = await statusRes.json();
+          if (mounted) {
+            if (statusData.storageMode) setStorageMode(statusData.storageMode);
+            setIsSupabaseConnected(Boolean(statusData.supabaseConnected));
           }
         }
 
-        if (mounted) {
-          let localProjects: ProjectItem[] | null = null;
-          try {
-            const stored = localStorage.getItem(STORAGE_KEY_PROJECTS);
-            if (stored) localProjects = JSON.parse(stored);
-          } catch {
-            // ignore
-          }
-
-          if (localProjects && localProjects.length > 0) {
-            // Merge local and server data: if client has custom added/edited projects, prioritize local and heal server
-            const mergedMap = new Map<string, ProjectItem>();
-            if (serverProjects) {
-              serverProjects.forEach(sp => mergedMap.set(sp.id, sp));
-            }
-            localProjects.forEach(lp => mergedMap.set(lp.id, lp));
-
-            const mergedList = Array.from(mergedMap.values());
-            setProjects(mergedList);
-
-            // Heal server disk by posting current merged list to server
-            fetch('/api/projects/sync', {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(mergedList)
-            }).catch(() => null);
-          } else if (serverProjects) {
-            setProjects(serverProjects);
+        if (projRes && projRes.ok) {
+          const projData = await projRes.json();
+          if (mounted && Array.isArray(projData)) {
+            setProjects(projData.map(p => ({
+              ...p,
+              visibility: { ...DEFAULT_VISIBILITY, ...(p.visibility || {}) }
+            })));
+            setIsServerConnected(true);
           }
         }
 
         if (contentRes && contentRes.ok) {
           const contentData = await contentRes.json();
-          if (mounted && contentData && contentData.brandName) {
-            let localContent: SiteContent | null = null;
-            try {
-              const stored = localStorage.getItem(STORAGE_KEY_CONTENT);
-              if (stored) localContent = JSON.parse(stored);
-            } catch {
-              // ignore
-            }
-
-            if (localContent && localContent.brandName) {
-              setSiteContent(localContent);
-              fetch('/api/content', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(localContent)
-              }).catch(() => null);
-            } else {
-              setSiteContent(prev => ({
-                ...prev,
-                ...contentData,
-                visibility: { ...(prev.visibility || {}), ...(contentData.visibility || {}) }
-              }));
-            }
+          if (mounted && contentData && (contentData.brandName || contentData.hero)) {
+            setSiteContent(prev => ({
+              ...prev,
+              ...contentData,
+              visibility: { ...(prev.visibility || {}), ...(contentData.visibility || {}) }
+            }));
           }
         }
 
@@ -316,7 +233,11 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
         }
       } catch (err) {
-        console.warn('Backend load notice:', err);
+        console.error('Error fetching data from server:', err);
+      } finally {
+        if (mounted) {
+          setIsLoading(false);
+        }
       }
     };
 
@@ -367,214 +288,162 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  // Project CRUD Actions with Dual-Persistence (localStorage + Server)
-  const addProject = async (projectData: Omit<ProjectItem, 'id' | 'publishedAt'>) => {
-    const newProject: ProjectItem = {
-      ...projectData,
-      id: `proj-${Date.now()}`,
-      publishedAt: new Date().toISOString().split('T')[0],
-      visibility: { ...DEFAULT_VISIBILITY, ...(projectData.visibility || {}) }
-    };
-
-    setProjects(prev => {
-      const next = [newProject, ...prev];
-      try {
-        localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
+  // Project CRUD Actions via Supabase API
+  const addProject = (projectData: Omit<ProjectItem, 'id' | 'publishedAt'>) => {
     setSyncStatus('saving');
-
-    try {
-      const res = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newProject)
+    fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(projectData)
+    })
+      .then(res => (res.ok ? res.json() : null))
+      .then(savedProject => {
+        if (savedProject) {
+          setProjects(prev => [
+            {
+              ...savedProject,
+              visibility: { ...DEFAULT_VISIBILITY, ...(savedProject.visibility || {}) }
+            },
+            ...prev
+          ]);
+          setSyncStatus('synced');
+          setLastSavedAt(new Date().toLocaleTimeString());
+        } else {
+          setSyncStatus('error');
+        }
+      })
+      .catch(err => {
+        console.error('Error adding project:', err);
+        setSyncStatus('error');
       });
-      if (res.ok) {
-        const savedProject = await res.json();
-        setProjects(prev => {
-          const updated = prev.map(p => (p.id === newProject.id ? savedProject : p));
-          try {
-            localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(updated));
-          } catch {
-            // ignore
-          }
-          return updated;
-        });
-        setSyncStatus('synced');
-        setLastSavedAt(new Date().toLocaleTimeString());
-      } else {
-        setSyncStatus('synced'); // localStorage holds it safely
-      }
-    } catch (err) {
-      console.error('Error saving new project to server:', err);
-      setSyncStatus('synced'); // localStorage holds it safely
-    }
   };
 
-  const updateProject = async (id: string, updates: Partial<ProjectItem>) => {
-    setProjects(prev => {
-      const next = prev.map(p => (p.id === id ? { ...p, ...updates } : p));
-      try {
-        localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
+  const updateProject = (id: string, updates: Partial<ProjectItem>) => {
+    setProjects(prev => prev.map(p => (p.id === id ? { ...p, ...updates } : p)));
     setSyncStatus('saving');
 
-    try {
-      const res = await fetch(`/api/projects/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
+    fetch(`/api/projects/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates)
+    })
+      .then(res => {
+        if (res.ok) {
+          setSyncStatus('synced');
+          setLastSavedAt(new Date().toLocaleTimeString());
+        } else {
+          setSyncStatus('error');
+        }
+      })
+      .catch(err => {
+        console.error('Error updating project:', err);
+        setSyncStatus('error');
       });
-      if (res.ok) {
-        setSyncStatus('synced');
-        setLastSavedAt(new Date().toLocaleTimeString());
-      } else {
-        setSyncStatus('synced');
-      }
-    } catch (err) {
-      console.error('Error updating project on server:', err);
-      setSyncStatus('synced');
-    }
   };
 
-  const deleteProject = async (id: string) => {
-    setProjects(prev => {
-      const next = prev.filter(p => p.id !== id);
-      try {
-        localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
+  const deleteProject = (id: string) => {
+    setProjects(prev => prev.filter(p => p.id !== id));
     setSyncStatus('saving');
 
-    try {
-      const res = await fetch(`/api/projects/${id}`, {
-        method: 'DELETE'
+    fetch(`/api/projects/${id}`, {
+      method: 'DELETE'
+    })
+      .then(res => {
+        if (res.ok) {
+          setSyncStatus('synced');
+          setLastSavedAt(new Date().toLocaleTimeString());
+        } else {
+          setSyncStatus('error');
+        }
+      })
+      .catch(err => {
+        console.error('Error deleting project:', err);
+        setSyncStatus('error');
       });
-      if (res.ok) {
-        setSyncStatus('synced');
-        setLastSavedAt(new Date().toLocaleTimeString());
-      } else {
-        setSyncStatus('synced');
-      }
-    } catch (err) {
-      console.error('Error deleting project on server:', err);
-      setSyncStatus('synced');
-    }
   };
 
-  const resetToDefaults = async () => {
+  const resetToDefaults = () => {
     setSyncStatus('saving');
-    try {
-      localStorage.removeItem(STORAGE_KEY_PROJECTS);
-      const res = await fetch('/api/projects/reset', { method: 'POST' });
-      if (res.ok) {
-        const defaults = await res.json();
-        setProjects(defaults);
-        setSyncStatus('synced');
-        setLastSavedAt(new Date().toLocaleTimeString());
-      } else {
-        setProjects(STATIC_PROJECTS);
-        setSyncStatus('synced');
-      }
-    } catch {
-      localStorage.removeItem(STORAGE_KEY_PROJECTS);
-      setProjects(STATIC_PROJECTS);
-      setSyncStatus('synced');
-    }
+    fetch('/api/projects/reset', { method: 'POST' })
+      .then(res => (res.ok ? res.json() : null))
+      .then(defaults => {
+        if (defaults) {
+          setProjects(defaults);
+          setSyncStatus('synced');
+          setLastSavedAt(new Date().toLocaleTimeString());
+        } else {
+          setSyncStatus('error');
+        }
+      })
+      .catch(() => setSyncStatus('error'));
   };
 
-  // Site Content CRUD with Server Persistence
-  const updateSiteContent = async (updated: Partial<SiteContent>) => {
-    setSiteContent(prev => {
-      const next = {
-        ...prev,
-        ...updated,
-        visibility: { ...(prev.visibility || {}), ...(updated.visibility || {}) },
-        about: updated.about ? { ...prev.about, ...updated.about } : prev.about,
-        hero: updated.hero ? { ...prev.hero, ...updated.hero } : prev.hero,
-        workflow: updated.workflow ? { ...prev.workflow, ...updated.workflow } : prev.workflow,
-        contact: updated.contact ? { ...prev.contact, ...updated.contact } : prev.contact
-      };
-      try {
-        localStorage.setItem(STORAGE_KEY_CONTENT, JSON.stringify(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
+  // Site Content CRUD via Supabase API
+  const updateSiteContent = (updated: Partial<SiteContent>) => {
+    setSiteContent(prev => ({
+      ...prev,
+      ...updated,
+      visibility: { ...(prev.visibility || {}), ...(updated.visibility || {}) },
+      about: updated.about ? { ...prev.about, ...updated.about } : prev.about,
+      hero: updated.hero ? { ...prev.hero, ...updated.hero } : prev.hero,
+      workflow: updated.workflow ? { ...prev.workflow, ...updated.workflow } : prev.workflow,
+      contact: updated.contact ? { ...prev.contact, ...updated.contact } : prev.contact
+    }));
     setSyncStatus('saving');
 
-    try {
-      const res = await fetch('/api/content', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updated)
+    fetch('/api/content', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updated)
+    })
+      .then(res => (res.ok ? res.json() : null))
+      .then(saved => {
+        if (saved) {
+          setSiteContent(saved);
+          setSyncStatus('synced');
+          setLastSavedAt(new Date().toLocaleTimeString());
+        } else {
+          setSyncStatus('error');
+        }
+      })
+      .catch(err => {
+        console.error('Error updating content:', err);
+        setSyncStatus('error');
       });
-      if (res.ok) {
-        const saved = await res.json();
-        setSiteContent(saved);
-        setSyncStatus('synced');
-        setLastSavedAt(new Date().toLocaleTimeString());
-      } else {
-        setSyncStatus('synced');
-      }
-    } catch (err) {
-      console.error('Error saving content:', err);
-      setSyncStatus('synced');
-    }
   };
 
-  const resetSiteContent = async () => {
+  const resetSiteContent = () => {
     setSyncStatus('saving');
-    try {
-      localStorage.removeItem(STORAGE_KEY_CONTENT);
-      const res = await fetch('/api/content/reset', { method: 'POST' });
-      if (res.ok) {
-        const defaults = await res.json();
-        setSiteContent(defaults);
-        setSyncStatus('synced');
-        setLastSavedAt(new Date().toLocaleTimeString());
-      } else {
-        setSiteContent(INITIAL_SITE_CONTENT);
-        setSyncStatus('synced');
-      }
-    } catch {
-      localStorage.removeItem(STORAGE_KEY_CONTENT);
-      setSiteContent(INITIAL_SITE_CONTENT);
-      setSyncStatus('synced');
-    }
+    fetch('/api/content/reset', { method: 'POST' })
+      .then(res => (res.ok ? res.json() : null))
+      .then(defaults => {
+        if (defaults) {
+          setSiteContent(defaults);
+          setSyncStatus('synced');
+          setLastSavedAt(new Date().toLocaleTimeString());
+        } else {
+          setSyncStatus('error');
+        }
+      })
+      .catch(() => setSyncStatus('error'));
   };
 
   // Inquiry submission
-  const addInquiry = async (inquiry: Omit<InquiryItem, 'id' | 'createdAt' | 'status'>) => {
-    const newInquiry: InquiryItem = {
-      ...inquiry,
-      id: `inq-${Date.now()}`,
-      createdAt: new Date().toISOString(),
-      status: 'new'
-    };
-    setInquiries(prev => [newInquiry, ...prev]);
-
-    try {
-      await fetch('/api/inquiries', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newInquiry)
+  const addInquiry = (inquiry: Omit<InquiryItem, 'id' | 'createdAt' | 'status'>) => {
+    fetch('/api/inquiries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(inquiry)
+    })
+      .then(res => (res.ok ? res.json() : null))
+      .then(savedInquiry => {
+        if (savedInquiry) {
+          setInquiries(prev => [savedInquiry, ...prev]);
+        }
+      })
+      .catch(err => {
+        console.error('Error submitting inquiry:', err);
       });
-    } catch (err) {
-      console.error('Error recording inquiry:', err);
-    }
   };
 
   // Import / Export
@@ -597,22 +466,23 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const importData = (jsonString: string): boolean => {
     try {
       const parsed = JSON.parse(jsonString);
-      if (parsed.projects && Array.isArray(parsed.projects)) {
-        setProjects(parsed.projects);
-        try {
-          localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(parsed.projects));
-        } catch {
-          // ignore
-        }
-        fetch('/api/projects/sync', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(parsed.projects)
-        });
-      }
-      if (parsed.siteContent && typeof parsed.siteContent === 'object') {
-        updateSiteContent(parsed.siteContent);
-      }
+      fetch('/api/projects/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed)
+      })
+        .then(res => {
+          if (res.ok) {
+            Promise.all([
+              fetch('/api/projects').then(r => r.json()),
+              fetch('/api/content').then(r => r.json())
+            ]).then(([freshProjects, freshContent]) => {
+              if (Array.isArray(freshProjects)) setProjects(freshProjects);
+              if (freshContent && typeof freshContent === 'object') setSiteContent(freshContent);
+            });
+          }
+        })
+        .catch(err => console.error('Error importing:', err));
       return true;
     } catch (err) {
       console.error('Import failed:', err);
@@ -650,11 +520,22 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         logoutAdmin,
         changeAdminPassword,
         isServerConnected,
+        storageMode,
+        isSupabaseConnected,
         syncStatus,
-        lastSavedAt
+        lastSavedAt,
+        isLoading,
+        checkServerStatus
       }}
     >
-      {children}
+      {isLoading ? (
+        <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4">
+          <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-4" />
+          <p className="text-slate-400 font-medium tracking-wide">Loading portfolio...</p>
+        </div>
+      ) : (
+        children
+      )}
     </ProjectContext.Provider>
   );
 };
